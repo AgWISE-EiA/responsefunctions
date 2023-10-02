@@ -2,94 +2,91 @@
 #################################################################################################################
 # 1. Sourcing required packages -------------------------------------------
 #################################################################################################################
-  packages_required <- c("plyr", "tidyverse", "ggplot2", "foreach","doParallel",
-                         "limSolve", "lpSolve", "Rquefts", "rgdal", "randomForest","ranger","Metrics")
-  
-  
-  
-  # check and install packages that are not yet installed
-  installed_packages <- packages_required %in% rownames(installed.packages())
-  if(any(installed_packages == FALSE)){
-    install.packages(packages_required[!installed_packages])}
-  
-  # load required packages
-  suppressWarnings(suppressPackageStartupMessages(invisible(lapply(packages_required, library, character.only = TRUE))))
-  
+packages_required <- c("plyr", "tidyverse", "ggplot2", "foreach","doParallel",
+                       "limSolve", "lpSolve", "Rquefts", "rgdal", "randomForest","ranger","Metrics")
+
+
+
+# check and install packages that are not yet installed
+installed_packages <- packages_required %in% rownames(installed.packages())
+if(any(installed_packages == FALSE)){
+  install.packages(packages_required[!installed_packages])}
+
+# load required packages
+suppressWarnings(suppressPackageStartupMessages(invisible(lapply(packages_required, library, character.only = TRUE))))
+
 
 
 #################################################################################################################
 # 2. read data and fit lmer to eliminate random error 
 #################################################################################################################
-  country <- "Rwanda"
-  useCaseName <- "RAB"
-  Crop <- "Rice"
-  source("~/agwise-responsefunctions/dataops/responsefunctions/Scripts/generic/QUEFTS_functions.R")
-  source("~/agwise-responsefunctions/dataops/responsefunctions/Scripts/generic/agwise_ML_routine.R")
-  
-  
-  pathIn1 <- paste("~/agwise-datasourcing/dataops/datasourcing/Data/useCase_", country, "_", useCaseName, "/", Crop, "/Landing/", sep="")
-  
-  pathIn <- paste("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_", country, "_", useCaseName, "/", Crop, "/raw/", sep="")
-  
-  pathOut1 <- paste("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_", country, "_", useCaseName, "/", Crop, "/transform/", sep="")
-  
-  if (!dir.exists(pathOut1)){
-    dir.create(file.path(pathOut1), recursive = TRUE)
-  }
+country <- "Rwanda"
+useCaseName <- "RAB"
+Crop <- "Rice"
+source("~/agwise-responsefunctions/dataops/responsefunctions/Scripts/generic/QUEFTS_functions.R")
+source("~/agwise-responsefunctions/dataops/responsefunctions/Scripts/generic/agwise_ML_routine.R")
+
+
+pathIn1 <- paste("~/agwise-datasourcing/dataops/datasourcing/Data/useCase_", country, "_", useCaseName, "/", Crop, "/Landing/", sep="")
+
+pathIn <- paste("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_", country, "_", useCaseName, "/", Crop, "/raw/", sep="")
+
+pathOut1 <- paste("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_", country, "_", useCaseName, "/", Crop, "/transform/", sep="")
+
+if (!dir.exists(pathOut1)){
+  dir.create(file.path(pathOut1), recursive = TRUE)
+}
 
 
 ###################################################################
 # Explore yield response to nutrients, observing b treatment 
 ###################################################################
-  ds<- unique(readRDS(paste(pathIn, "compiled_fieldData.RDS", sep="")))
-  ds <- subset(ds, select=-c(N100, P100, K100))
-  ds$treat2 <- paste(ds$N, ds$P, ds$K, sep=":")
-  # head(ds)
-  
-  ds$treat <- factor(ds$treat, levels=c("Increased_NPK", "NPK","NPK_120N","NPK_100N","NPK_40K",
-                                             "NPK_60P", "NPK_45P","NPK_30P","NPK_17_3","NPK_20K",             
-                                             "NK", "PK","NP","NPK_60N","Control"))
-  
-  ds$treat2 <- factor(ds$treat2, levels=c("120:45:40", "160:25:70","120:15:28","100:15:28","80:15:40",
-                                        "80:60:28", "80:45:28","80:30:28","80:15:28","80:15:20",             
-                                        "160:0:70", "0:25:70","160:25:0","60:15:28","0:0:0"))
-  ggA <- ggplot(ds,aes(treat, blup))+
-    geom_boxplot()+
-    facet_wrap(~expCode+season, scales = "free")+
-    ylab("BLUP tuber yield (t/ha)") + xlab("Treatment")+
-    # ggtitle("Tuber yield by treatments")+
-    theme_bw()+
-    theme(axis.text.x = element_text(angle=30, vjust=1, hjust=1))
-  
-  ggsave(paste(pathOut1, "yieldTreat.pdf", sep=""), ggA, width = 10, height = 6)
-  
-  
-  ggB <- ggplot(ds,aes(treat, yieldEffectBlup))+
-    geom_boxplot()+
-    facet_wrap(~expCode+season, scales = "free")+
-    ylab("BLUP yield effect (t/ha)") + xlab("Treatment")+
-    # ggtitle("Tuber yield by treatments")+
-    theme_bw()+
-    theme(axis.text.x = element_text(angle=30, vjust=1, hjust=1))
-  
-  ggsave(paste(pathOut1, "yieldEffectTreat.pdf", sep=""), ggB, width = 10, height = 6)
-  
+ds<- unique(readRDS(paste(pathIn, "compiled_fieldData.RDS", sep="")))
+ds <- subset(ds, select=-c(N100, P100, K100))
+ds$treat2 <- paste(ds$N, ds$P, ds$K, sep=":")
+# head(ds)
+
+ds$treat <- factor(ds$treat, levels=c("Increased_NPK", "NPK","NPK_120N","NPK_100N","NPK_40K",
+                                           "NPK_60P", "NPK_45P","NPK_30P","NPK_17_3","NPK_20K",             
+                                           "NK", "PK","NP","NPK_60N","Control"))
+
+ds$treat2 <- factor(ds$treat2, levels=c("120:45:40", "160:25:70","120:15:28","100:15:28","80:15:40",
+                                      "80:60:28", "80:45:28","80:30:28","80:15:28","80:15:20",             
+                                      "160:0:70", "0:25:70","160:25:0","60:15:28","0:0:0"))
+ggA <- ggplot(ds,aes(treat, blup))+
+  geom_boxplot()+
+  facet_wrap(~expCode+season, scales = "free")+
+  ylab("BLUP tuber yield (t/ha)") + xlab("Treatment")+
+  # ggtitle("Tuber yield by treatments")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=30, vjust=1, hjust=1))
+
+ggsave(paste(pathOut1, "yieldTreat.pdf", sep=""), ggA, width = 10, height = 6)
+
+
+ggB <- ggplot(ds,aes(treat, yieldEffectBlup))+
+  geom_boxplot()+
+  facet_wrap(~expCode+season, scales = "free")+
+  ylab("BLUP yield effect (t/ha)") + xlab("Treatment")+
+  # ggtitle("Tuber yield by treatments")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=30, vjust=1, hjust=1))
+
+ggsave(paste(pathOut1, "yieldEffectTreat.pdf", sep=""), ggB, width = 10, height = 6)
+
 
 ###################################################################
-# Link soil and weather data
+# read data linked to soil and weather data
 ###################################################################
 
-  trialSoil <- readRDS(paste0(pathIn, "geo_4ML/SoilDEM_PointData_trial_profile.RDS"))
-  TrialWearher<- readRDS(paste0(pathIn, "geo_4ML/weatherSummaries_trial.RDS"))
-  
-  
-  
-  ML_train_Data <- unique(readRDS(paste(pathIn, "modelReady_trial.RDS", sep="")))
-  ML_train_Data <- ML_train_Data %>%
-    mutate(province = NAME_1,
-           district = NAME_2)
-  
-  ML_train_Data <- ML_train_Data[!is.na(ML_train_Data$province), ]
+ML_train_Data <- unique(readRDS(paste(pathIn, "modelReady_trial.RDS", sep="")))
+
+
+ML_train_Data <- ML_train_Data %>%
+  mutate(province = NAME_1,
+         district = NAME_2)
+
+ML_train_Data <- ML_train_Data[!is.na(ML_train_Data$province), ]
 
 
 # removing common variables and soil variables with unlikely predictive value:

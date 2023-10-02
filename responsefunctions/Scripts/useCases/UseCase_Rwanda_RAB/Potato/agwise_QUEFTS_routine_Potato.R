@@ -1,4 +1,50 @@
 
+
+
+### The AgWise modules data flow and scripts 
+
+## 1. Field data from different sources is aggregated 
+##### script: agwise-datacuration/dataops/datacuration/Scripts/useCases/UseCase_Rwanda_RAB/Potato/Compiling all potato fieldData Rwanda.
+##### output data : agwise-datacuration/dataops/datacuration/Data/useCase_Rwanda_RAB/Potato/transform/aggregated_fieldData.RDS"
+
+
+## 2. linear mixed effects model is fitted and BLUPs are extracted
+###### script: agwise-datacuration/dataops/datacuration/Scripts/useCases/UseCase_Rwanda_RAB/Potato/randomNoiseReduction_potato_RAB.R
+###### output data in two locations as resulr for data cuaration module and as raw data for response function 
+      ### agwise-datacuration/dataops/datacuration/Data/useCase_Rwanda_RAB/Potato/result/compiled_fieldData.RDS"
+      ### agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Potato/raw//compiled_fieldData.RDS
+
+
+## 3. getting the secondary data from geo-spatial layers
+###### script: 
+      ### agwise-datasourcing/dataops/datasourcing/Scripts/generic/get_geoSpatialData.R
+      ### agwise-datasourcing/dataops/datasourcing/Scripts/useCases/useCase_Rwanda_RAB/Potato/get_geoSpatialData_RAB_Potato.R
+###### data: for crop models and machine learning application is saved in the rsult folder of this module and as raw data for response functions and potential yield modules
+      ### agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Potato/result/geo_4cropModel
+      ### agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Potato/result/geo_4ML
+
+      ### agwise-potentialyield/dataops/potentialyield/Data/useCase_Rwanda_RAB/Potato/raw/geo_4cropModel
+      ### agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Potato/raw
+
+
+## 4. running the crop models: this is not done for potato, we used yield response to the highest NPK rate +20% as yield ceiling. For the demo we can look at the maize work
+####### script:   
+    ### agwise-potentialyield/dataops/potentialyield/Script/useCases/UseCase_Rwanda_RAB/Maize/DSSAT/run_DSSAT_RAB_Maize.R
+    ### agwise-potentialyield/dataops/potentialyield/Script/useCases/UseCase_Rwanda_RAB/Maize/DSSAT/get_CM_geo_RAB_Maize
+
+####### data:
+    ### agwise-potentialyield/dataops/potentialyield/Data/useCase_Rwanda_RAB/Maize/Landing/DSSAT
+    ### agwise-potentialyield/dataops/potentialyield/Data/useCase_Rwanda_RAB/Maize/result/DSSAT/Trial
+
+
+## 5. modeling yield response to nutrients 
+####### script 
+    ### agwise-responsefunctions/dataops/responsefunctions/Scripts/generic
+    ### agwise-responsefunctions/dataops/responsefunctions/Scripts/useCases/UseCase_Rwanda_RAB/Potato/agwise_QUEFTS_routine_Potato.R
+ ## this last script is what is running below ...
+
+
+
 #################################################################################################################
 # 1. Sourcing required packages -------------------------------------------
 #################################################################################################################
@@ -9,16 +55,8 @@ if(any(installed_packages == FALSE)){
   install.packages(packages_required[!installed_packages])}
 suppressWarnings(suppressPackageStartupMessages(invisible(lapply(packages_required, library, character.only = TRUE))))
 
-
-### the previous procedures:
-## 1. agwise-datacuration/dataops/datacuration/Scripts/useCases/UseCase_Rwanda_RAB/Potato/Compiling all potato fieldData Rwanda.R 
-## 2. agwise-datacuration/dataops/datacuration/Scripts/useCases/UseCase_Rwanda_RAB/Potato/randomNoiseReduction_potato_RAB.R
-## 3. agwise-datasourcing/dataops/datasourcing/Scripts/useCases/useCase_Rwanda_RAB/Potato/get_geoSpatialData_4ML_RAB_Potato.R
-
-
-
 #################################################################################################################
-# 2. read data and fit lmer to eliminate random error 
+## set path and input counry crop and use case 
 #################################################################################################################
 country <- "Rwanda"
 useCaseName <- "RAB"
@@ -36,42 +74,59 @@ if (!dir.exists(pathOut1)){
   dir.create(file.path(pathOut1), recursive = TRUE)
 }
 
-### read data with blups and effects and ref treat indication (without the geo-spatial data)
+#################################################################################################################
+## read the yield, soil, weather and AEZ data and merge
+#################################################################################################################
+
+## yield data
 ds<- unique(readRDS(paste(pathIn, "compiled_fieldData.RDS", sep="")))
-ds <- subset(ds, select=-c(N100, P100, K100))
+ds <- ds %>% dplyr::select(-c(N100, P100, K100, yieldEffectraw, yieldEffectBlup, FDID, refYBLUP, refY)) %>% unique()
+ds$location <- paste(ds$lon, ds$lat, sep="_")
 str(ds)
 
+## add province and district
+countryShp <- geodata::gadm(country, level = 2, path='.')
+dd2 <- raster::extract(countryShp, ds[, c("lon", "lat")])[, c("NAME_1", "NAME_2")]
+ds$province <- dd2$NAME_1
+ds$district <- dd2$NAME_2
 
 
-### read yield data linked with soil and weather data
+## AEZ data: this is not always available for all use cases
+AEZ <- readOGR(dsn=paste(pathIn2, "/AEZ", sep=""),  layer="AEZ_DEM_Dissolve")
+RW_aez <- spTransform(AEZ, CRS( "+proj=longlat +ellps=WGS84 +datum=WGS84"))
+gpsPoints <- ds[, c("lon", "lat")]
+gpsPoints$longitude <- as.numeric(gpsPoints$lon)
+gpsPoints$latitude <- as.numeric(gpsPoints$lat)
+RAW_AEZ_trial <- suppressWarnings(raster::extract(RW_aez, gpsPoints[, c("longitude", "latitude")]))
+ds_AEZ <- RAW_AEZ_trial %>%
+  select(c(Names_AEZs)) %>%
+  cbind(ds)
+ds_AEZ <- ds_AEZ %>%
+  dplyr::rename(AEZ = Names_AEZs)
 
-ML_train_Data <- unique(readRDS(paste(pathIn, "modelReady_trial.RDS", sep="")))
 
-ML_train_Data <- ML_train_Data %>%
-  mutate(province = NAME_1,
-         district = NAME_2)
 
-ML_train_Data <- ML_train_Data[!is.na(ML_train_Data$province), ]
+### read the soil data and link to yield + AEZ
+solDem_trial <- readRDS((paste0(pathIn, 'geo_4ML/SoilDEM_PointData_trial.RDS')))
+solDem_trial$location <- paste(solDem_trial$lon, solDem_trial$lat, sep="_")
+solDem_trial <- solDem_trial %>% dplyr::select(-c(lon, lat, ID))
 
+ML_train_Data <- merge(ds_AEZ, solDem_trial, by="location", all.x = TRUE) ## some data have lon, lat falling in water bodies and no vlaue sin digital soil maps
+
+ML_train_Data <- ML_train_Data[!is.na(ML_train_Data$c_tot_top), ]
 
 # removing variables with unlikely predictive value:
 sdt <- ML_train_Data %>%
-  dplyr::select(-c(refY, N100, P100, K100,yieldEffectraw, yieldEffectBlup, FDID,plantingDate, harvestDate,
-                   Names_AEZs, totalRF, nrRainyDays, Rain_month1, Rain_month2,Rain_month3, 
-                   Rain_month4,Tmax_mean, Tmax_month1, Tmax_month2, Tmax_month3, Tmax_month4, Tmin_mean, Tmin_month1,
-                   Tmin_month2, Tmin_month3,Tmin_month4,
-                   AvRelativeHumidity, RH_month1, RH_month2, RH_month3, RH_month4, AvSolarRadiation,
-                   solarRad_month1,solarRad_month2, solarRad_month3, solarRad_month4, slope, TPI,  TRI,
-                   fe_top, fe_bottom, B_0_30, Cu_0_30, Mn_0_30,longitude , latitude, NAME_1, NAME_2)) %>%
+  dplyr::select(-c(plantingDate, harvestDate, TPI,  TRI, slope, fe_top, fe_bottom, B_0_30, Cu_0_30, Mn_0_30, NAME_1, NAME_2)) %>%
   mutate(province = "Iburengerazuba", district = "Rubavu") %>%
   mutate(lat = as.numeric(lat),
          lon = as.numeric(lon),
          TLID = as.factor(TLID),
          expCode = as.factor(expCode),
-         TY = Yield)%>%
+         TY = TY) %>%
   unique()
  
-#select treatments with high nutrient rates (Increased NPK for RS-PFR-1, NPK_all for IFDC, NPK11 for SA-VAL-1):
+#select treatments with high nutrient rates (Increased NPK for RS-PFR-1, NPK_all for IFDC, NPK11 for SA-VAL-1): create ref yield class
 ds_ref <- sdt %>%
   filter(refTreat == TRUE) %>%
   dplyr::group_by(expCode, TLID) %>%
@@ -90,7 +145,7 @@ tdt <- sdt %>%
 ds_sdt <- sdt %>%
   left_join(tdt) %>%
   left_join(ds_ref) %>%
-  dplyr::select(-c(altitude, refYBLUP, Yield)) %>%
+  dplyr::select(-c(altitude)) %>%
   unique()
 
 
@@ -209,7 +264,7 @@ RF_K <- randomForest(log(K_base_supply) ~ ., subset(ins, select = -c(N_base_supp
 end <- Sys.time()
 t_randomForest <- end - start
 
-
+## ranger is faster
 start <- Sys.time()
 RF_N_ranger <- ranger(formula = log(N_base_supply) ~ ., 
                       data = subset(ins, select = -c(P_base_supply, K_base_supply)), 
@@ -426,21 +481,20 @@ for(i in unique(ins2$TLID)){
 
 py <- unique(py)
 
-ds3 <- ds %>%
+ds3 <- unique(readRDS(paste(pathIn, "compiled_fieldData.RDS", sep=""))) %>%
   select(-c(refY, refYBLUP, yieldEffectraw, yieldEffectBlup))
 
 
-
 py %>% left_join(ds3 %>% dplyr::select(TLID, expCode, season) %>% unique()) %>%
-  #filter(Nlim == "limiting", Plim == "non-limiting" & Klim == "non-limiting") %>%
-  # mutate(refY = ifelse(N > 75 & P > 30 & K > 50, "Reference treatment", "Other treatments")) %>%
-  mutate(refY = ifelse(refTreat == TRUE, "Reference treatment", "Other treatments")) %>%
+  mutate(refY = ifelse(N > 75 & P > 30 & K > 50, "Reference treatment", "Other treatments")) %>%
   ggplot(aes(x = Yp, y = Yq)) + 
   geom_point(alpha = .33, shape = 16) + 
   geom_abline(slope= 1, intercept = 0) + 
   ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
   ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
                         formula = y ~ x, size = 6) +
+  
+  #facet_wrap(~expCode+season, ncol=3) + 
   xlab("\nPredicted tuber yield (t/ha)")+
   ylab("Reverse QUEFTS calculated potato tuber yield (t/ha)\n")+
   xlim(0, 62.5)+
@@ -452,10 +506,11 @@ py %>% left_join(ds3 %>% dplyr::select(TLID, expCode, season) %>% unique()) %>%
 
 
 
+
 pyr <- py %>%
   gather(variable, value, Yq:Yb) %>%
   group_by(TLID, N, P, K, variable,refTreat) %>%
-  summarise(value = mean(value)) %>%
+  dplyr::summarise(value = mean(value)) %>%
   mutate(treat = ifelse(refTreat == TRUE, "ref", "other")) %>%
   group_by(TLID, variable) %>%
   mutate(refY = mean(ifelse(treat == "ref", value, NA), na.rm=TRUE),
@@ -471,176 +526,8 @@ pyr <- py %>%
 
 
 
-
-
-
-
-
-aa <- py %>% left_join(ds_sdt %>% dplyr::select(TLID, expCode, season, refTreat) %>% unique())
-
-aa[aa$TLID == "SATLRW480109938798", ]
-
-
-diff_INS <- NULL
-for(tids in unique(aa$TLID)){
-  tdata <- aa[aa$TLID == tids, ]
-  tdata$RQ_diff <- tdata[tdata$refTreat == TRUE, ]$Yq - tdata$Yq
-  tdata$RF_diff <- tdata[tdata$refTreat == TRUE, ]$Yp - tdata$Yp
-  tdata$medianINS_diff <- tdata[tdata$refTreat == TRUE, ]$Yn - tdata$Yn
-  tdata$blup_diff <- tdata[tdata$refTreat == TRUE, ]$Yb - tdata$Yb
-  diff_INS <- rbind(diff_INS, tdata)
-  
-}
-
-diff_INS[diff_INS$TLID == "SATLRW480109938798", ]
-
-ggplot(diff_INS, aes(RQ_diff, blup_diff))+
-  geom_point(alpha = .33, shape = 16) + 
-  geom_abline(slope= 1, intercept = 0) + 
-  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6) +
-  geom_text(data = diff_INS %>% 
-              dplyr::summarise(rmse = sqrt(sum((blup_diff)**2)/nrow(diff_INS)),
-                               value = -1,
-                               Yb = 20),
-            aes(label = paste0("rmse = ", round(rmse*100)/100)),
-            size = 6, hjust = 1) +
-  xlab("Yield difference (t/ha), soil INS from reverse QUEFTS") +
-  ylab("BLUP yield difference to reference (t/ha)") +
-  theme_gray() +
-  theme(axis.title = element_text(size = 12, face="bold"),
-        axis.text = element_text(size = 12),
-        strip.text = element_text(size = 12, face="bold"))
-
-ggplot(diff_INS, aes(RF_diff, blup_diff))+
-  geom_point(alpha = .33, shape = 16) + 
-  geom_abline(slope= 1, intercept = 0) + 
-  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6) +
-  xlab("Yield difference (t/ha), soil INS from Random forest") +
-  ylab("BLUP yield difference to reference (t/ha)") +
-  theme_gray()+
-  theme(axis.title = element_text(size = 12, face="bold"),
-        axis.text = element_text(size = 12),
-        strip.text = element_text(size = 12, face="bold"))
-
-
-ggplot(diff_INS, aes(medianINS_diff, blup_diff))+
-  geom_point(alpha = .33, shape = 16) + 
-  geom_abline(slope= 1, intercept = 0) + 
-  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6) +
-  xlab("Yield difference (t/ha), median soil INS from RQ") +
-  ylab("BLUP yield difference to reference (t/ha)") +
-  theme_gray()+
-  theme(axis.title = element_text(size = 12, face="bold"),
-        axis.text = element_text(size = 12),
-        strip.text = element_text(size = 12, face="bold"))
-
-
-
-py %>% left_join(ds_sdt %>% dplyr::select(TLID, expCode, season, refTreat) %>% unique()) %>%
-  mutate(refY = ifelse(refTreat == TRUE, "Reference treatment", "Other treatments")) %>%
-  ggplot(aes(x = Yp, y = Yb)) + 
-  geom_point(alpha = .33, shape = 16) + 
-  geom_abline(slope= 1, intercept = 0) + 
-  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6) +
-  xlab("\nPredicted tuber yield (t/ha) using RF predicted supply") +
-  ylab("BLUP potato tuber yield (t/ha)\n") +
-  xlim(0, 60)+
-  ylim(0, 60)+
-  theme_gray()+
-  theme(axis.title = element_text(size = 12, face="bold"),
-        axis.text = element_text(size = 12),
-        strip.text = element_text(size = 12, face="bold"))
-
-
-py %>% left_join(ds_sdt %>% dplyr::select(TLID, expCode, season, refTreat) %>% unique()) %>%
-  mutate(refY = ifelse(refTreat == TRUE, "Reference treatment", "Other treatments")) %>%
-  ggplot(aes(x = Yq, y = Yb)) + 
-  geom_point(alpha = .33, shape = 16) + 
-  geom_abline(slope= 1, intercept = 0) + 
-  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6) +
-  xlab("\nPredicted tuber yield (t/ha) using RQ predicted supply") +
-  ylab("BLUP potato tuber yield (t/ha)\n") +
-  xlim(0, 60)+
-  ylim(0, 60)+
-  theme_gray()+
-  theme(axis.title = element_text(size = 12, face="bold"),
-        axis.text = element_text(size = 12),
-        strip.text = element_text(size = 12, face="bold"))
-
-
-
-
-pyr1 <- py %>%
-  gather(variable, value, Yq:Yb) %>%
-  dplyr::group_by(TLID, N, P, K, variable,refTreat )
-head(pyr1)
-pyr1[pyr1$TLID == "SATLRW480109938798", ]
-
-pyr2 <- pyr1 %>%
-  dplyr::summarise(value = mean(value)) %>%
-  ddply(.(TLID, variable), summarize, refY = mean(ifelse(refTreat == TRUE, value, NA), na.rm=TRUE)) %>%
-  unique()
-pyr2[pyr2$TLID == "SATLRW480109938798", ]
-
-
-pyr3 <- pyr1[pyr1$refTreat == FALSE, ] 
-pyr3 <- merge(pyr3, pyr2, by=c("TLID", "variable"))
-pyr3$dY <- pyr3$refY - pyr3$value
-
-
-
-pyr4 <- pyr3[pyr3$variable == "Yb" , ]
-pyr4$diffBlup <- pyr4$dY
-
-pyr5 <- pyr3[!pyr3$variable == "Yb", ]
-
-pyr6 <- merge(pyr5[, c("TLID","variable", "dY")], pyr4[, c("TLID", "diffBlup")], by="TLID")
-head(pyr6)
-
-
-pyr6 <- pyr6 %>%
-  mutate(variable = mapvalues(variable, 
-                            from = c("Yq", "Yp", "Yn"),
-                            to = c("supply from reverse QUEFTS", "supply by RF prediction", "simple medians for supply"))) %>%
-  unique()
-pyr3[pyr3$TLID == "SATLRW480109938798", ]
-
- ggplot(pyr6, aes(dY, diffBlup)) +
-  geom_point(alpha=.33, shape=16) +
-  facet_wrap(~variable) +
-  # geom_text(data = pyr6 %>% 
-  #             dplyr::group_by(variable) %>% 
-  #             dplyr::summarise(rmse = sqrt(sum((dY - diffBlup)**2)/n()),
-  #                              value = -1,
-  #                              diffBlup = 20),
-  #           aes(label = paste0("rmse = ", round(rmse*100)/100)),
-  #           size = 6, hjust = 1) +
-  xlab("\nPredicted potato tuber yield difference to reference treatment [t/ha]") +
-  ylab("BLUP potato tuber yield difference to reference treatment [t/ha]\n") +
-  geom_abline(intercept = 0, slope = 1) +
-  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6, label.y = .975) +
-  theme_gray()+
-  theme(axis.title = element_text(size = 14, face="bold"),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size = 14, face="bold"))
-
-
-
-
-
 pyr %>%
+  filter(variable != "Yo") %>%
   #filter(Nlim == "limiting", Plim == "non-limiting" & Klim == "non-limiting") %>%
   mutate(variable = as.character(variable)) %>%
   ggplot(aes(x = value, y = Yb)) + 
@@ -648,22 +535,24 @@ pyr %>%
   facet_wrap(~variable) +
   geom_text(data = pyr %>% 
               filter(variable != "Yo") %>% 
-              dplyr::group_by(variable) %>% 
+              group_by(variable) %>% 
               dplyr::summarise(rmse = sqrt(sum((value - Yb)**2)/n()),
-                        value = -1,
-                        Yb = 20),
+                               value = -1,
+                               Yb = 22),
             aes(label = paste0("rmse = ", round(rmse*100)/100)),
-            size = 6, hjust = 1) +
+            size = 6, hjust = 0) +
   xlab("\nPredicted potato tuber yield difference to reference treatment [t/ha]") +
   ylab("BLUP potato tuber yield difference to reference treatment [t/ha]\n") +
   geom_abline(intercept = 0, slope = 1) +
   ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
-  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
-                        formula = y ~ x, size = 6, label.y = .975) +
+  ggpmisc::stat_poly_eq(use_label(c("eq")),
+                        formula = y ~ x, size = 6) +
   theme_gray()+
   theme(axis.title = element_text(size = 14, face="bold"),
         axis.text = element_text(size = 14),
         strip.text = element_text(size = 14, face="bold"))
+
+
 
 
 
@@ -672,14 +561,12 @@ pyr %>%
 # 8. Alternative approach: Predict yield directly with Random Forest a la Jordan & Camilla #
 ############################################################################################
 
+
 #Prepare dataset...
-
-ds$season_AB <- ifelse(ds$season %in% c("2021A", "2022A"), "A", "B")
-
 dsp <- ds %>%
   mutate(Y = blup) %>%
   group_by(TLID, season, N, P, K) %>%
-  summarise(Y = mean(Y)) %>%
+  dplyr::summarise(Y = mean(Y)) %>%
   ungroup() %>%
   mutate(season_AB = ifelse(grepl("A", season), "A", "B")) %>%
   dplyr::select(-season) %>%
@@ -687,6 +574,178 @@ dsp <- ds %>%
   join(ds_ref) %>%
   join(tdt) %>%
   na.omit()
+
+#First model that includes district and refY
+RF0 <- randomForest(Y ~ ., subset(dsp, select=-c(TLID, expCode)), importance=TRUE, ntree=200)
+sqrt(RF0$mse[length(RF0$mse)])
+RF0
+varImpPlot(RF0)
+
+
+
+#Simpler model without district and refY
+RF1 <- randomForest(Y ~ ., subset(dsp, select=-c(TLID, expCode, district, refY, season_AB)), importance=TRUE, ntree=200)
+sqrt(RF1$mse[length(RF1$mse)])
+RF1
+varImpPlot(RF1)
+
+
+predRFs <- NULL
+
+#Obtain yield estimates using LOOCV:
+for(i in unique(dsp$TLID)){
+  
+  dsp_train <- subset(dsp[dsp$TLID != i,], select = -c(TLID, expCode, TY, blup, season, altitude))
+  dsp_valid <- subset(dsp[dsp$TLID == i,], select = -c(TLID, expCode, TY, blup, season, altitude))
+  
+  #RF0 <- randomForest(Y ~ ., dsp_train, ntree=500)
+  #RF1 <- randomForest(Y ~ ., subset(dsp_train, select = -c(district, refY)), ntree=500)
+  
+  RF0 <- ranger(formula = Y ~ ., data = dsp_train, num.trees = 200) 
+  RF1 <- ranger(formula = Y ~ ., data = subset(dsp_train, select = -c(AEZ, district, refY, refTreat, season_AB)), num.trees = 200) 
+  
+  predRFs <- rbind(predRFs, unique(data.frame(TLID = i,
+                                       subset(dsp_valid, select=c(N, P, K, Y, refTreat)),
+                                       #dYp0 = predict(RF0, dsp_valid),
+                                       #dYp1 = predict(RF1, dsp_valid)
+                                       Yp0 = predict(RF0, dsp_valid)$predictions,
+                                       Yp1 = predict(RF1, dsp_valid)$predictions))
+  )
+  
+}
+
+
+predRFsl <- predRFs %>%
+  tidyr::gather(variable, value, Yp0:Yp1) %>%
+  mutate(variable = mapvalues(variable, from = c("Yp0", "Yp1"), to = c("with AEZ, district, refY and season_AB", "without AEZ, district, refY and season_AB")))
+
+
+
+ggplot(predRFsl, aes(x = value, y = Y)) + 
+  geom_point(alpha=.33, shape=16) +
+  facet_wrap(~variable) +
+  geom_text(data = predRFsl %>% 
+              group_by(variable) %>% 
+              dplyr::summarise(rmse = sqrt(sum((value - Y)**2)/n()),
+                               value = -1,
+                               Y = 53),
+            aes(label = paste0("rmse = ", round(rmse*100)/100)),
+            size = 6, hjust = 0) +
+  xlab("\nPredicted potato tuber yield using RF model [t/ha]") +
+  ylab("BLUP potato tuber yield [t/ha]\n") +
+  geom_abline(intercept = 0, slope = 1) +
+  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
+  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
+                        formula = y ~ x, size = 6) +
+  theme_gray()+
+  theme(axis.title = element_text(size = 14, face="bold"),
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 14, face="bold"))
+
+
+
+predRFs
+
+predRFs <- predRFs[, c("TLID","refTreat","N", "P", "K", "Y","Yp0", "Yp1")]
+
+predRFsl2 <- predRFs %>%
+  tidyr::gather(variable, value, Y:Yp1) %>%
+  dplyr::group_by(TLID, variable) %>% 
+  mutate(refY = ifelse(refTreat == TRUE , value, NA)) %>%
+  as.data.frame()
+         
+
+predRFsl2$dum <- paste(predRFsl2$TLID, predRFsl2$variable, sep="_")
+for(dums in unique(predRFsl2$dum)){
+  predRFsl2[predRFsl2$dum == dums, ]$refY <- predRFsl2[predRFsl2$dum == dums & !is.na(predRFsl2$refY), ]$refY
+}
+
+predRFsl3 <- predRFsl2 %>% 
+  mutate(dY = refY - value) %>%
+  filter(!(refTreat == TRUE)) %>%
+  dplyr::select(-c(refY, value, dum)) %>%
+  tidyr::spread(variable, dY) %>%
+  dplyr::rename(dY = Y, dYp0 = Yp0, dYp1 = Yp1) %>%
+  tidyr::gather(variable, value, dYp0:dYp1) %>%
+  mutate(variable = mapvalues(variable, from = c("dYp0", "dYp1"), to = c("with district, refY and season_AB", "without district, refY and season_AB")))
+
+
+
+
+ggplot(data = predRFsl3, aes(x = value, y = dY)) +
+  geom_point(alpha=.33, shape=16) +
+  facet_wrap(~variable) +
+  geom_text(data = predRFsl3 %>% 
+              group_by(variable) %>% 
+              dplyr::summarise(rmse = sqrt(sum((value - dY)**2)/n()),
+                               value = -1,
+                               dY = 20),
+            aes(label = paste0("rmse = ", round(rmse*100)/100)),
+            size = 6, hjust = 0) +
+  xlab("\nRF predicted potato tuber yield effect relative to reference treatment [t/ha]") +
+  ylab("BLUP tuber yield effect relative to reference treatment [t/ha]\n") +
+  geom_abline(intercept = 0, slope = 1) +
+  ggpmisc::stat_poly_line(formula = y ~ x, se = F) +
+  ggpmisc::stat_poly_eq(use_label(c("eq", "R2")),
+                        formula = y ~ x, size = 6) +
+  theme_gray()+
+  theme(axis.title = element_text(size = 14, face="bold"),
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 14, face="bold"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
