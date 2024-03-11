@@ -101,7 +101,7 @@ train_ML_H20Auto <- function(country, useCaseName, Crop, listVars=NULL, nthread)
           max_depth = seq(bestModData$minDepth - 3, bestModData$maxDepth +3, 2)
         )
       
-        # Train and tune the random forest model
+        # Train and tune the gradient boosting model
         grid_gbm <- h2o.grid(
           algorithm = "gbm",
           x = predictors,
@@ -343,6 +343,139 @@ Krate_pred <- c(seq(min(trData$K), (max(trData$K)+10), 10))
 
 
 expand_grid(Nrate_pred, Prate_pred, Krate_pred)
+
+
+
+
+## Defining a Stacked Ensemble Model library(h2o)
+h2o.init()
+
+# import the higgs_train_5k train and test datasets
+train <- h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/testng/higgs_train_5k.csv")
+test <- h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/testng/higgs_test_5k.csv")
+
+# Identify predictors and response
+y <- "response"
+x <- setdiff(names(train), y)
+
+# Convert the response column in train and test datasets to a factor
+train[, y] <- as.factor(train[, y])
+test[, y] <- as.factor(test[, y])
+
+
+# Set number of folds for base learners
+nfolds <- 3
+
+# Train & Cross-validate a GBM model
+my_gbm <- h2o.gbm(x = x,
+                  y = y,
+                  training_frame = train,
+                  distribution = "bernoulli",
+                  ntrees = 10,
+                  nfolds = nfolds,
+                  keep_cross_validation_predictions = TRUE,
+                  seed = 1)
+
+# Train & Cross-validate an RF model
+my_rf <- h2o.randomForest(x = x,
+                          y = y,
+                          training_frame = train,
+                          ntrees = 10,
+                          nfolds = nfolds,
+                          keep_cross_validation_predictions = TRUE,
+                          seed = 1)
+
+
+# Next we can train a few different ensembles using different metalearners
+
+# Train a stacked ensemble using the default metalearner algorithm
+stack <- h2o.stackedEnsemble(x = x,
+                             y = y,
+                             training_frame = train,
+                             base_models = list(my_gbm, my_rf))
+h2o.auc(h2o.performance(stack, test))
+# 0.7570171
+
+# Train a stacked ensemble using GBM as the metalearner algorithm
+# The metalearner will use GBM default values
+stack_gbm <- h2o.stackedEnsemble(x = x,
+                                 y = y,
+                                 training_frame = train,
+                                 base_models = list(my_gbm, my_rf),
+                                 metalearner_algorithm = "gbm")
+h2o.auc(h2o.performance(stack_gbm, test))
+# 0.7511055
+
+# Train a stacked ensemble using RF as the metalearner algorithm
+# The metalearner will use RF default values
+stack_rf <- h2o.stackedEnsemble(x = x,
+                                y = y,
+                                training_frame = train,
+                                base_models = list(my_gbm, my_rf),
+                                metalearner_algorithm = "drf")
+h2o.auc(h2o.performance(stack_rf, test))
+# 0.7232461
+
+# Train a stacked ensemble using Deep Learning as the metalearner algorithm
+# The metalearner will use RF default values
+stack_dl <- h2o.stackedEnsemble(x = x,
+                                y = y,
+                                training_frame = train,
+                                base_models = list(my_gbm, my_rf),
+                                metalearner_algorithm = "deeplearning")
+h2o.auc(h2o.performance(stack_dl, test))
+# 0.7571556
+
+#Explanation Plotting Functions#
+#There are a number of individual plotting functions that are used inside the explain() function. Some of these functions take a group of models as input and others just evaluate a single model at a time. The following functions take a list of models (including an AutoML object or an H2OFrame with model_id column, e.g., the Leaderboard) as input:
+#When h2o.explain() is provided a single model, we get the following global explanations:
+#Residual Analysis (regression only)
+#Variable Importance
+#Partial Dependence (PD) Plots
+#Individual Conditional Expectation (ICE) Plots
+# Methods for an AutoML object
+h2o.varimp_heatmap(autoML)
+h2o.model_correlation_heatmap(autoML,
+                              test_data,
+                              cluster_models = TRUE,
+                              triangular = TRUE)
+h2o.pd_multi_plot(autoML,
+                  test_data,
+                  column = "N")
+
+#These functions take a single H2O model as input, here we start with gbm:
+h2o.residual_analysis_plot(ML_gbm,test_data)
+h2o.varimp_plot(ML_gbm)
+h2o.shap_explain_row_plot(ML_gbm,test_data,row_index = 1)
+h2o.shap_summary_plot(ML_gbm,test_data)
+h2o.pd_plot(ML_gbm,test_data,column = "N")
+h2o.ice_plot(ML_gbm,test_data,column = "N")
+
+#Explanation with ML_randomForest
+
+h2o.residual_analysis_plot(ML_randomForest,test_data)
+h2o.varimp_plot(ML_randomForest)
+h2o.shap_explain_row_plot(ML_randomForest,test_data,row_index = 1)
+h2o.shap_summary_plot(ML_randomForest,test_data)
+h2o.pd_plot(ML_randomForest,test_data,column = "N")
+h2o.ice_plot(ML_randomForest,test_data,column = "N")
+
+
+
+
+
+
+
+
+valData <- readRDS(paste("/home/jovyan/agwise/AgWise_Data/fieldData_analytics/UseCase_", country, "_",useCaseName, "/", Crop, "/raw/", "field_geoSpatiallinked_geoSpatial_AOI.RDS", sep=""))
+
+Nrate_pred <- c(seq(min(trData$N), (max(trData$N)+10), 10))
+Prate_pred <- c(seq(min(trData$P), (max(trData$P)+10), 10))
+Krate_pred <- c(seq(min(trData$K), (max(trData$K)+10), 10))
+
+
+expand_grid(Nrate_pred, Prate_pred, Krate_pred)
+
 
 
 
