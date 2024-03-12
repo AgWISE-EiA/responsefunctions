@@ -263,3 +263,165 @@ ds2 <- ds2 %>%
 
 saveRDS(ds2, "~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Potato/raw/compiled_fieldData.RDS")
 
+
+
+
+#
+# source("D:/workspace/SAnDMan/get_ONA_data.R")
+# 
+# 
+# #######################################
+# # 1. Get the potato data from SAnDMan #
+# #######################################
+# 
+# #downloading the data
+# wd <- "D:/workspace/SAnDMan"
+# setwd(wd)
+# creds <- scan(paste0(wd, "/pws.txt"), what = "character")
+# user <- creds[1]
+# pw   <- creds[2]
+# 
+# #get the list of all datasets of user...
+# dss <- findONAdatasets(user = user, pw = pw)
+# 
+# #download and decompose the assign field/trial/plot data:
+# id <- dss[dss$id_string == "Assign_FDTLPO",]$id
+# ad <- getONAdata(user = user, pw = pw, id = id) 
+# ad <- decomposeONAdata(ad)
+# 
+# #get the field identifiers
+# af <- ad[[1]] %>%
+#   filter(grepl("FD", entity)) %>%
+#   dplyr::select(FDID2_new, FD_name_new, FD_owner, HHID, lat, lon) %>%
+#   rename(FDID2 = FDID2_new,
+#          FD_name = FD_name_new)
+# 
+# #get the trial identifiers
+# at <- ad[[3]] %>%
+#   join(ad[[1]] %>% dplyr::select(L1, entity, season, plantingDate, expCode)) %>%
+#   filter(grepl("TL", entity),
+#          L2 == "trial") %>%
+#   dplyr::select(TLID2_new, TL_name_new, season, plantingDate, expCode) %>%
+#   mutate(plantingDate = as.Date(plantingDate, format="%Y-%m-%d")) %>%
+#   rename(TLID2 = TLID2_new,
+#          TL_name = TL_name_new)
+# 
+# #download and decompose the potato plot level data:
+# id <- dss[dss$id_string == "Measure_Potato_PO",]$id
+# pd <- getONAdata(user = user, pw = pw, id = id) 
+# pd <- decomposeONAdata(pd)
+# 
+# #get the potato plot yield data and merge with trial and field identifiers:
+# ds1 <- pd[[3]] %>% #plot level data
+#   filter(!is.na(tubersFW) | !is.na(tubersMarketableFW)) %>%
+#   left_join(pd[[1]] %>% dplyr::select(L1, projectCode, FDID2, TLID2, today, start)) %>% #field level data
+#   mutate(harvestDate = as.Date(today, format="%Y-%m-%d"),
+#          start = as.POSIXct(gsub("\\+.*","", start), format="%Y-%m-%dT%H:%M:%S", tz="UTC")) %>%
+#   dplyr::select(projectCode, FDID2, TLID2, POID2, POID2_label, start, harvestDate, plotLength, plotWidth, nrPlants, tubersFW, tubersMarketableFW) %>%
+#   left_join(af) %>%
+#   left_join(at)
+# 
+# #extracting treatment from label
+# ds1 <- ds1 %>% 
+#   mutate(treat = sub("_[^_]+$", "", POID2_label),
+#          treat = gsub("_rep1", "", treat),
+#          treat = gsub("_rep2", "", treat),
+#          treat = gsub("_repA", "", treat),
+#          treat = gsub("_repB", "", treat),
+#          plotSize = as.numeric(plotLength) * as.numeric(plotWidth),
+#          tubersFW = as.numeric(tubersFW),
+#          tubersMarketableFW = as.numeric(tubersMarketableFW),
+#          plantingDate = as.Date(plantingDate, format = "%Y-%m-%d")) %>%
+#   filter(treat != "",
+#          expCode != "RS-PLR-1") #removing lime trials without varying NPK rates
+# 
+# #correcting season entries
+# ds1 <- ds1 %>%
+#   mutate(season = ifelse(season %in% c("2222B", "B2022", "2022b", "2020B", "2022"), "2022B", season),
+#          season = ifelse(season == "2020A", "2021A", season))
+# 
+# #correcting plotsize and calculating yield
+# ds1 <- ds1 %>% 
+#   mutate(plotSize = abs(plotSize),
+#          plotSize = ifelse(plotSize>500, plotSize/100, plotSize),
+#          plotSize = ifelse(plotSize>50, plotSize/10, plotSize)) %>%
+#   group_by(TLID2) %>%
+#   mutate(plotSize = median(plotSize)) %>%
+#   group_by(POID2) %>%
+#   filter(start == max(start)) %>% #only taking the last observation per POID
+#   mutate(n = n()) %>%
+#   filter(n == 1) %>% #drop all plots that have more than one yield observation
+#   ungroup() %>%
+#   mutate(TY = ifelse(is.na(tubersFW), tubersMarketableFW, tubersFW)/plotSize*10,
+#          TY = ifelse(POID2 == "SAPORW756633027058", TY/10, TY)) %>% #correcting entry without decimal separator
+#   left_join(read.csv("D:/workspace/SAnDMan/potato_trials_nutrient_rates.csv")) %>%
+#   rename(FDID = FDID2,
+#          TLID = TLID2) %>%
+#   dplyr::select(expCode, FDID, TLID, lat, lon, season, plantingDate, harvestDate, treat, N, P, K, TY) %>%
+#   as.data.frame()
+# 
+# #adding and replacing plant and harvest dates from records by RAB staff for RS-PFR-1:
+# phd <- read.csv("D:/workspace/RwaSIS/potato_trials_with_yield_data_2023-04-14_RwaSIS_PFR.csv") %>%
+#   mutate(plantingDate_FB = as.Date(Planting.date, format="%d/%m/%Y"),
+#          harvestDate_FB = as.Date(Harvest.date, format="%d/%m/%Y")) %>%
+#   rename(FDID = FDID2,
+#          TLID = TLID2) %>%
+#   dplyr::select(FDID, TLID, plantingDate_FB, harvestDate_FB)
+#   
+# ds1 <- ds1 %>% left_join(phd) %>%
+#   mutate(plantingDate = if_else(is.na(plantingDate_FB), plantingDate, plantingDate_FB),
+#          harvestDate = if_else(is.na(harvestDate_FB), harvestDate, harvestDate_FB)) %>%
+#   dplyr::select(-c(plantingDate_FB, harvestDate_FB)) %>%
+#   #replace impossible harvest dates by the planting date + median duration of trials
+#   mutate(harvestDate = if_else(is.na(plantingDate) | (as.numeric(harvestDate - plantingDate) < 150 & as.numeric(harvestDate - plantingDate) > 90), harvestDate, plantingDate + median(harvestDate - plantingDate)))
+#   
+# #########################################
+# # 2. Preparing the RwaSIS season 1 data #
+# #########################################
+# 
+# ds2 <- read.csv("D:/workspace/RwaSIS/rwasis-potato-fertiliser-all-data.csv")
+# 
+# ds2 <- ds2 %>%
+#   filter(ds2$season == "2022A") %>% #removing the SAnDMan data which are 2022B data in ds1 for RS_PFR-1
+#   rename(lon = gps_lon,
+#          lat = gps_lat,
+#          treat = treatment,
+#          N = nfert_kgha,
+#          P = pfert_kgha,
+#          K = kfert_kgha,
+#          TY = yield_tha,
+#          FDID = farm_id) %>%
+#   mutate(expCode = "RS-PFR-1",
+#          FDID = paste0("RwaSIS_", FDID),
+#          TLID = FDID,
+#          plantingDate = as.Date(planting_date, format="%Y-%m-%d"),
+#          harvestDate = as.Date(harvest_date, format="%Y-%m-%d")) %>%
+#   mutate(harvestDate = if_else(is.na(plantingDate) | (as.numeric(harvestDate - plantingDate) < 150 & as.numeric(harvestDate - plantingDate) > 90), harvestDate, plantingDate + median(harvestDate - plantingDate))) %>%
+#   dplyr::select(expCode, FDID, TLID, lat, lon, season, plantingDate, harvestDate, treat, N, P, K, TY)
+# 
+# #####################################
+# # 3. Preparing the IFDC potato data #
+# #####################################
+# 
+# ds3 <- read.csv("D:/workspace/RwaSIS/IFDC_Rwanda potato 2014B season data subset.csv")
+# ds3_nutrates <- read.csv("D:/workspace/RwaSIS/IFDC_Rwanda potato 2014B season treat nutrates.csv")
+# ds3 <- ds3 %>%
+#   gather(treat, TY, control:all_redK) %>%
+#   mutate(season = "2014B",
+#          expCode = "IFDC",
+#          FDID = paste0("IFDC_", siteNr),
+#          TLID = FDID, 
+#          plantingDate = NA,
+#          harvestDate = NA) %>%
+#   join(ds3_nutrates) %>%
+#   dplyr:: select(expCode, FDID, TLID, lat, lon, season, plantingDate, harvestDate, treat, N, P, K, TY)
+# 
+# ds3[ds3$TLID == "IFDC_3",]$lon <- ds3[ds3$TLID == "IFDC_3",]$lon - 1 #wrong GPS entry 
+
+#########################################
+# 4. Fit lmer to eliminate random error #
+#########################################
+
+# ds <- rbind(ds1, ds2, ds3)
+
+# write.csv(ds, "compiled_potato_fertiliser_trial_data.csv", row.names = FALSE)

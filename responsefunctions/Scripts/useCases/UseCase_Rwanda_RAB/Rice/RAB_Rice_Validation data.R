@@ -121,6 +121,36 @@ ds_filtr <- ds_filtr %>%
       SSR_riceGrainsMC = SSR1_riceGrainsMC,
       IBR_riceGrainsMC = SSR2_riceGrainsMC)
 
+### map the vlaidation location 
+rwshp0 <- st_as_sf(geodata::gadm(country, level = 0, path='.'))
+rwshp1 <- st_as_sf(geodata::gadm(country, level = 1, path='.'))
+rwshp2 <- st_as_sf(geodata::gadm(country, level = 2, path='.'))
+rwshp3 <- st_as_sf(geodata::gadm(country, level = 3, path='.'))
+rwshp4 <- st_as_sf(geodata::gadm(country, level = 4, path='.'))
+rwlake <- st_read("~/agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Rice/Landing/Lakes/RWA_Lakes_NISR.shp")
+AEZ <- readOGR(dsn="~/agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Rice/Landing/AEZ",  layer="AEZ_DEM_Dissolve")
+RW_aez <- spTransform(AEZ, CRS( "+proj=longlat +ellps=WGS84 +datum=WGS84"))
+RW_aez <- RW_aez[RW_aez$Names_AEZs %in% c("Granitic ridge", "Central plateau", "Eastern savana", 
+                                          "Mayaga","Eastern plateau","Kivu  Lake borders", "Imbo"),]
+rwAEZ <- st_as_sf(RW_aez)
+ggplot()+
+  geom_sf(data = rwshp0, linewidth = 1.2, color = "black", fill=NA) + 
+  geom_sf(data = rwAEZ, aes(fill = Names_AEZs)) +
+  geom_sf(data = rwlake, size=NA, fill="lightblue")+
+  geom_sf(data = rwshp1, linewidth = 0.8, color = "black", fill=NA) +
+  geom_sf(data = rwshp0, linewidth = 1.2, color = "black", fill=NA) + 
+  geom_point(data = ds_filtr, aes(x=as.numeric(lon), y=as.numeric(lat), 
+                                       colour = Variety3, shape = AEZ, size=3))+
+  scale_shape_manual(values = c(0,1,2,3,7,8,9,15,23)) +
+  scale_fill_manual(values = c(rep("grey3", 8))) +
+  theme_bw()+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  theme(axis.title = element_blank(),
+        axis.text = element_text(size=14),legend.position = "right",
+        strip.text = element_text(size=14, face="bold"))
+
+
 ## yield distribution by treatment 
 par(mfrow=c(2,2))
 hist(ds_filtr$BR_riceGrainsFW,main="BR")
