@@ -79,7 +79,7 @@ if (!dir.exists(pathOut1)){
 #################################################################################################################
 
 ## yield data
-ds<- unique(readRDS(paste(pathIn, "compiled_fieldData.RDS", sep="")))
+ds<- unique(readRDS("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Potato/raw/compiled_fieldData.RDS"))
 ds <- ds %>% dplyr::select(-c(N100, P100, K100, yieldEffectraw, yieldEffectBlup, FDID, refYBLUP, refY)) %>% unique()
 ds$location <- paste(ds$lon, ds$lat, sep="_")
 str(ds)

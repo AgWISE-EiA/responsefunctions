@@ -2,7 +2,7 @@
 #################################################################################################################
 # 1. Sourcing required packages -------------------------------------------
 #################################################################################################################
-packages_required <- c("plyr", "tidyverse", "ggplot2", "foreach","doParallel","MuMIn","ggpmisc","sf","cluster",
+packages_required <- c("plyr", "tidyverse", "ggplot2", "foreach","doParallel","MuMIn","ggpmisc","sf","cluster","h2o",
                        "limSolve", "lpSolve", "Rquefts", "rgdal", "randomForest","ranger","Metrics", "factoextra")
 installed_packages <- packages_required %in% rownames(installed.packages())
 if(any(installed_packages == FALSE)){
@@ -10,18 +10,15 @@ if(any(installed_packages == FALSE)){
 suppressWarnings(suppressPackageStartupMessages(invisible(lapply(packages_required, library, character.only = TRUE))))
 
 
-### the previous procedures:
+##https://h2o-release.s3.amazonaws.com/h2o/rel-3.46.0/1/index.html#
+
+### the previous procedures:k 
 ## 1. agwise-datacuration/dataops/datacuration/Scripts/useCases/UseCase_Rwanda_RAB/Potato/Compiling all potato fieldData Rwanda.R 
 ## 2. agwise-datacuration/dataops/datacuration/Scripts/useCases/UseCase_Rwanda_RAB/Potato/randomNoiseReduction_potato_RAB.R
 ## 3.  run get soil and topo geo data
 ## 4. read soil, AEZ and top and merge with yield data
 
 
-
-### read yield data linked with soil and weather data ML_train_Data <- unique(readRDS(paste(pathIn, "modelReady_trial.RDS", sep="")))
-
-
-ML_train_Data <- unique(readRDS(paste(pathIn, "modelReady_trial.RDS", sep="")))
 
 #################################################################################################################
 # 2. read data 
@@ -50,11 +47,159 @@ pathIn2 <- paste("~/agwise-datasourcing/dataops/datasourcing/Data/useCase_", cou
 
 ## field data
 ds<- unique(readRDS(paste(pathInFieldData, "compiled_fieldData.RDS", sep="")))
+
+## saving data or crop type mapping using remote sensing application
+head(ds)
+ds_RS <- ds %>%
+  dplyr::mutate(country = "Rwanda") %>% 
+  dplyr::rename(lon = longitude,
+                lat = latitude ) %>% 
+  dplyr::select(c(country, lon, lat, planting_date, harvest_date)) %>% 
+  unique()
+ds_RS$crop <- "Potato"
+str(ds_RS)
+
+saveRDS(ds_RS , "~/agwise-datacuration/dataops/datacuration/Data/useCase_Rwanda_RAB/Potato/raw/data4RS.RDS")
+#########
+
+
 ds <- subset(ds, select=-c(yieldEffectraw, yieldEffectBlup,refY, refYBLUP))
 
+## data to test DSSAT
+Dssat_potato <- unique(ds[, c("TLID", "lat","lon", "plantingDate", "harvestDate")])
+write.csv(Dssat_potato, "Dssat_potato.csv", row.names = FALSE)
+
+ds$N <- round(ds$N, digits = 0)
+ds$P <- round(ds$P, digits = 0)
+ds$K <- round(ds$K, digits = 0)
+
+
+#plot showing yield ranges by experiment and season:
+ds %>%
+  ggplot(aes(x = season, y = TY)) +
+  geom_boxplot() +
+  facet_wrap(~expCode, scales="free_y", ncol=1) +
+  coord_flip()+
+  theme_gray()+
+  ylab("\nPotato tuber yield [t/ha]")+
+  theme(axis.title.x = element_text(size = 15, face="bold"),
+        axis.title.y = element_blank(),
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 14, face="bold", hjust=0))
+
+
+
+#plot showing variation in yield as affected by NPK rate by experiment and season:
+ds %>%
+  gather(nutrient, rate, N:K) %>%
+  mutate(nutrient = factor(nutrient, levels=c("N", "P", "K"))) %>%
+  ggplot(aes(rate, TY)) + 
+  geom_point(alpha=.33, shape=16) +
+  facet_grid(nutrient ~ expCode+season) + 
+  xlab("\nFertilizer nutrient application rate [kg/ha]") +
+  ylab("Observed tuber yield [kg/ha]\n") +
+  theme(axis.title = element_text(size = 15, face="bold"),
+        axis.text = element_text(size = 14),
+        strip.text = element_text(size = 14, face="bold"))
+
+ds <- ds %>% 
+  dplyr::mutate(Experiment = if_else(expCode == "IFDC", "Exp-1", 
+                                     if_else(expCode == "SA-VAP-1", "Exp-2", "Exp-3"))) %>% 
+  dplyr::mutate(trt = paste0("N",N, "P", P, "K",K)) %>% 
+  dplyr::mutate(trt =  ifelse(treat %in% c("NPK11","NPK_increased","NPK", "NPK_all"), "Reference", 
+                              ifelse(treat == "N0P0K0", "Control" ,trt)))
+
+ds <- ds %>% 
+  dplyr::mutate(trt2 =  ifelse(trt == "N0P0K0", "Control", trt))
+
+ds %>% 
+  gather(nutrient, rate, N:K) %>%
+  mutate(nutrient = factor(nutrient, levels=c("N", "P", "K"))) %>%
+  ggplot(aes( trt2, TY, fill=season)) + 
+  geom_boxplot() +
+  facet_wrap(~Experiment+season, scales = "free_x") + 
+  xlab("\n (b) Fertilizer nutrient application rate [kg/ha]") +
+  ylab("Observed tuber yield [kg/ha]\n") +
+  theme_bw() +
+  theme(axis.title = element_text(size = 15, face="bold"),
+        axis.text.y = element_text(size = 11),
+        axis.text.x = element_text(size = 11, angle=90, hjust=1, vjust=0.5),
+        strip.text = element_text(size = 14, face="bold"),
+        legend.position = "none")
+  
+
+
+#plot showing yield ranges by experiment and season:
+
+  # ggplot(aes(x = TY,
+  #            colour=paste0(expCode, " (", season, ")"),
+  #            fill=paste0(expCode, " (", season, ")")
+  # )) +
+  ds %>% 
+  ggplot(aes(x = TY, colour=season, fill=season)) +
+  geom_density(alpha=.2, linewidth=1) +
+  facet_wrap(~Experiment, scales="free_y", ncol=1) +
+  theme_gray()+
+  xlab("\n (a) Potato tuber yield [t/ha]")+
+  ylab("Density")+
+  theme_bw()+
+  theme(axis.title = element_text(size = 15, face="bold"),
+        axis.text = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = 15, face="bold", hjust=0))
+
+
+ds <- ds %>% 
+  dplyr::mutate(Experiment = if_else(expCode == "IFDC", "Exp-1 (2014 B)", 
+                                     if_else(expCode == "SA-VAP-1", "Exp-2 (2021 A & B)", "Exp-3 (2022 A & B)")))
+
+
+
+#map with trial locations:
+country <- "Rwanda"
+rwshp0 <- st_as_sf(geodata::gadm(country, level = 0, path='.'))
+rwshp1 <- st_as_sf(geodata::gadm(country, level = 1, path='.'))
+rwshp2 <- st_as_sf(geodata::gadm(country, level = 2, path='.'))
+rwshp3 <- st_as_sf(geodata::gadm(country, level = 3, path='.'))
+rwshp4 <- st_as_sf(geodata::gadm(country, level = 4, path='.'))
+rwlake <- st_read("~/agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Maize/Landing/Lakes/RWA_Lakes_NISR.shp")
+rwAEZ <- readOGR(dsn="~/agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Maize/Landing/AEZ",  layer="AEZ_DEM_Dissolve")
+rwAEZ <- rwAEZ[rwAEZ$Names_AEZs %in% c("Birunga", "Congo-Nile watershed divide", "Buberuka highlands"),]
+RW_aez <- spTransform(rwAEZ, CRS( "+proj=longlat +ellps=WGS84 +datum=WGS84"))
+rwAEZ <- st_as_sf(RW_aez)
+rwAEZ$Names_AEZs
+
+
+
+ ggplot()+
+  geom_sf(data = rwshp0, linewidth = 1, color = "black", fill=NA) + 
+  geom_sf(data = rwAEZ, aes(fill = Names_AEZs)) +
+  geom_sf(data = rwlake, size=NA, fill="lightblue")+
+  # geom_sf(data = rwshp3[rwshp3$NAME_1 %in% c("Amajyaruguru","Amajyepfo","Iburengerazuba"),], linewidth = 0.2, color = "white", fill=NA) + 
+  geom_sf(data = rwshp2[rwshp2$NAME_1 %in% c("Amajyaruguru","Amajyepfo","Iburengerazuba"),], linewidth = 0.6, color = "grey", fill=NA) +
+  geom_sf(data = rwshp1, linewidth = 0.6, color = "black", fill=NA) + 
+  geom_sf(data = rwshp0, linewidth = 1, color = "black", fill=NA) + 
+  geom_sf_text(data = rwshp2[rwshp2$NAME_1 %in% c("Amajyaruguru","Amajyepfo","Iburengerazuba"),], aes(label = NAME_2), size=3) +
+  geom_point(data = ds, aes(x=as.numeric(lon), y=as.numeric(lat), shape = Experiment, colour = Experiment, size = Experiment))+
+  scale_shape_manual(values = c(15, 16, 18))+
+  scale_size_manual(values = c(2,2,3))+
+  scale_colour_manual(values = c("cornflowerblue", "blue", "blue4"))+
+  scale_fill_manual(values = c("darkgoldenrod1", "darkgoldenrod", "burlywood"), name= "Agrocology")+
+  theme_bw()+
+  xlab("Longitude")+
+  ylab("Latitude")+
+  theme(axis.title = element_blank(),
+        axis.text = element_text(size=14),
+        legend.title = element_text(size=12, face="bold"),
+        legend.text = element_text(size=12))
+
+
+
+
 ## soil, totpo and AEZ data
-soil <- unique(readRDS(paste(pathInSoilData, "Soil_PointData_trial.RDS", sep="")))
-Topo <- unique(readRDS(paste(pathInTopoData, "Topography_PointData_trial.RDS", sep="")))
+soil <- unique(readRDS(paste(pathInFieldData, "Soil_PointData_trial.RDS", sep="")))
+Topo <- unique(readRDS(paste(pathInFieldData, "Topography_AEZ_trial.RDS", sep="")))
 
 soil[soil$ID == "IFDC_3", ]$NAME_1 <- "Amajyaruguru"
 soil[soil$ID == "IFDC_3", ]$NAME_2 <- "Burera"
@@ -76,7 +221,7 @@ gpsPoints$latitude <- as.numeric(gpsPoints$latitude)
 RAW_AEZ_trial <- suppressWarnings(raster::extract(RW_aez, gpsPoints[, c("longitude", "latitude")]))
 
 RAW_AEZ_trial <- RAW_AEZ_trial %>%
-  select(c(Names_AEZs)) %>%
+  dplyr::select(c(Names_AEZs)) %>%
   cbind(soil[, c("ID", "longitude", "latitude")])
  
  
@@ -84,10 +229,43 @@ RAW_AEZ_trial <- RAW_AEZ_trial %>%
  AEZ_Topo <- RAW_AEZ_trial %>%
    left_join(Topo)
  
-
  ds_topo <- merge(ds, AEZ_Topo, by.x=c( "TLID",  "lon","lat") ,by.y=c("ID", "longitude", "latitude"))
  
-  
+ 
+ ### characterizing the soil properties within AEZ
+ RAW_AEZ_trial <- suppressWarnings(raster::extract(RW_aez, gpsPoints[, c("longitude", "latitude")]))
+ dsoil_topo <-  RAW_AEZ_trial %>%
+   dplyr::select(c(Names_AEZs)) %>%
+      cbind(soil) %>% 
+   left_join(Topo[, c("ID", "altitude", "slope", "TPI", "TRI", "AltClass")])
+ 
+ head(dsoil_topo)
+ summary(dsoil_topo)
+ 
+ 
+ 
+ dsoil_topoL <- dsoil_topo %>% 
+   gather(variable, value, c_tot_top:TRI) 
+ 
+ dsoil_topoL <- droplevels(dsoil_topoL[!dsoil_topoL$variable %in% c("texture_class_bottom", "texture_class_top", "NAME_1", "NAME_2"),])
+ dsoil_topoL$value = as.numeric(dsoil_topoL$value)
+
+ sumtabled <- ddply(dsoil_topoL, .(Names_AEZs, variable), summarize, medvalue = median(value, na.rm = TRUE), minvlaue=min(value), maxvalue = max(value))
+ write.csv(sumtabled, "ssummary_table_soil.csv", row.names = FALSE)
+ head(sumtabled)
+ sumtabled_mean <- tidyr::spread(sumtabled[, c("Names_AEZs","variable", "medvalue")], variable, medvalue)
+write.csv(sumtabled_mean, "ssummary_table_soil_med.csv", row.names = FALSE)
+
+sumtabled_min<- tidyr::spread(sumtabled[, c("Names_AEZs","variable", "minvlaue")], variable, minvlaue)
+write.csv(sumtabled_min, "ssummary_table_soil_min.csv", row.names = FALSE)
+
+sumtabled_max <- tidyr::spread(sumtabled[, c("Names_AEZs","variable", "maxvalue")], variable, maxvalue)
+write.csv(sumtabled_max, "ssummary_table_soil_max.csv", row.names = FALSE)
+
+
+
+
+
 
  #############################
  # 3. Running reverse QUEFTS #
@@ -126,9 +304,13 @@ RAW_AEZ_trial <- RAW_AEZ_trial %>%
  
  
  
+ ds <- ds %>% 
+   dplyr::mutate(Experiment = if_else(expCode == "IFDC", "Exp-1", 
+                                      if_else(expCode == "SA-VAP-1", "Exp-2", "Exp-3")))
+ 
  INS <- supply %>%
    #adding lats and lons and data source:
-   left_join(ds %>% dplyr::select(TLID, lat, lon, expCode, season) %>% unique()) %>%
+   left_join(ds %>% dplyr::select(TLID, lat, lon, Experiment, season) %>% unique()) %>%
    mutate(lat = as.numeric(lat),
           lon = as.numeric(lon)) %>%
    #setting negative values to zero and maximal values to 750:
@@ -142,6 +324,12 @@ RAW_AEZ_trial <- RAW_AEZ_trial %>%
    #remove incomplete rows:
    na.omit()
  
+ ### set maximal N to 250,  and K supply to 525 and maximal P supply to 150 kg ha-1. 
+ INS$N_base_supply <- ifelse(INS$N_base_supply > 250, 250,  INS$N_base_supply)
+ INS$K_base_supply <- ifelse(INS$K_base_supply > 525, 525,  INS$K_base_supply)
+ INS$P_base_supply <- ifelse(INS$P_base_supply > 150, 150,  INS$P_base_supply)
+ INS[INS$Experiment == "Exp-3" & INS$K_base_supply > 300, ]$K_base_supply <- 300
+ INS[INS$Experiment == "Exp-3" & INS$N_base_supply > 200, ]$N_base_supply <- 200
  
  
  #Create plot to demonstrate ranges in supply by expCode and season combinations:
@@ -152,18 +340,18 @@ RAW_AEZ_trial <- RAW_AEZ_trial %>%
                                          "P_base_supply" = "P",
                                          "K_base_supply" = "K")),
           season = ifelse(grepl("A", season), "A", "B")) %>%
-   ggplot(aes(x = expCode, y = value, fill = season)) + 
+   ggplot(aes(x = Experiment, y = value, fill = season)) + 
    geom_boxplot()+
    scale_fill_manual(values = c("grey90", "grey50"))+
    facet_wrap(~variable, nrow=1) +
    #ylim(0,500) +
-   theme_gray() +
-   ylab("Indigenous nutrient supply (kg/ha)\n") +
+   theme_bw() +
+   ylab("Apparent soil nutrient supply [Mg ha-1]\n") +
    theme(axis.title.y = element_text(size = 15, face="bold"),
          axis.title.x = element_blank(),
          legend.text = element_text(size = 14),
          legend.title = element_text(size = 14, face = "bold"),
-         legend.position = c(0.07, 0.9),
+         legend.position = c(0.08, 0.85),
          axis.text = element_text(size = 14),
          strip.text = element_text(size = 14, face="bold"))
  
@@ -229,6 +417,116 @@ RAW_AEZ_trial <- RAW_AEZ_trial %>%
    ))
  
  set.seed(333)
+ 
+ ### test h20
+ response <- "P_base_supply"
+ predictors <- ins |> names()
+ predictors <- predictors[!predictors %in% c("N_base_supply","P_base_supply","K_base_supply",
+                                             "Experiment","AEZs_no", "index" )]
+ ins$index <- c(1:nrow(ins))
+ 
+ h2o.init()
+ ML_inputData.h2o <- as.h2o(ins)
+ 
+ #create a random training-test split of our data ## should be possible to do it by missing one
+ ML_inputData_split <- h2o.splitFrame(data = ML_inputData.h2o, ratios = 0.7, seed = 444)
+ training_data <- ML_inputData_split[[1]]
+ test_data <- ML_inputData_split[[2]]
+ 
+ hyperparams_gbm <- list(
+   ntrees = seq(500, 1000, 100), ### is tested for diff nrtrees with seq(20, 200, 20), seq(200, 500, 50) and seq(500, 1000, 100)
+   max_depth = seq(4, 8, 2)
+ )
+ 
+ # Train and tune the gradient boosting model
+ grid_gbm <- h2o.grid(
+   algorithm = "gbm",
+   x = predictors,
+   y = response,
+   #y = response2,
+   grid_id = "hyperparams_gbm",
+   hyper_params = hyperparams_gbm,
+   training_frame = training_data,
+   validation_frame = test_data,
+   seed = 444
+ )
+ 
+ 
+ # Get the best hyper parameters
+ best_hyperParm <- h2o.getModel(grid_gbm@model_ids[[1]])
+ print(best_hyperParm@parameters) 
+ 
+ ntrees_gbm_optim <- best_hyperParm@parameters$ntrees
+ max_depth_gbm_optim <- best_hyperParm@parameters$max_depth
+ 
+ ### fit the model with the tuned hyper parameters: 
+ ML_gbm <- h2o.gbm(x = predictors,
+                   y = response,
+                   ntrees = ntrees_gbm_optim,
+                   max_depth = max_depth_gbm_optim,
+                   training_frame = training_data,
+                   validation_frame = test_data,
+                   keep_cross_validation_predictions = TRUE,
+                   nfolds = 5,
+                   seed = 444)
+ 
+ 
+ pathOut <- "~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Potato/transform"
+ model_path <- h2o.saveModel(object = ML_gbm, path = pathOut, force = TRUE)
+ print(model_path)
+ # load the model
+ saved_model <- h2o.loadModel(model_path)
+ 
+ # download the model built above to your local machine
+ my_local_model <- h2o.download_model(ML_gbm, path = pathOut)
+ 
+ # upload the model that you just downloded above to the H2O cluster
+ uploaded_model <- h2o.upload_model(my_local_model)
+ 
+ 
+ 
+ rmse_r2_gbm <- data.frame(mae=round(h2o.mae(ML_gbm, train=TRUE, valid=TRUE), 0),
+                           rmse = round(h2o.rmse(ML_gbm, train=TRUE, valid=TRUE), 0),
+                           R_sq = round(h2o.r2(ML_gbm, train=TRUE, valid=TRUE), 2))
+ rmse_r2_gbm
+ h2o.residual_analysis_plot(ML_gbm,test_data)
+ 
+ bestMod_tuened <- data.frame(ntrees = ntrees_gbm_optim, maxDepth=max_depth_gbm_optim, R2 = rmse_r2_gbm$R_sq, rmse = rmse_r2_gbm$rmse)
+ 
+ #the variable importance plot
+ par(mar = c(1, 1, 1, 1))#Expand the plot layout pane
+ h2o.varimp_plot(ML_gbm)
+ 
+ 
+ h2o.partialPlot(object = ML_gbm, test_data, cols = c("N_0_30"))
+ 
+ 
+ GBM_valid <- test_data
+ GBM_valid$predResponse <- h2o.predict(object = ML_gbm, newdata = test_data)
+ GBM_valid <- as.data.frame(GBM_valid)
+ GBM_valid$Response <- GBM_valid[,which(names(GBM_valid)==response)]
+ 
+ GBM_valid$difn <- abs(GBM_valid$Response - GBM_valid$predResponse)
+ hist( GBM_valid$difn)
+ GBM_valid[GBM_valid$difn > 40, "index"]
+ test_data <- test_data[!test_data$index %in% GBM_valid[GBM_valid$difn > 40, "index"], ]
+ 
+ 
+ ggplot(GBM_valid, aes(Response, predResponse)) +
+   geom_point() +
+   geom_abline(slope = 1, intercept = 0, color = "blue") +
+   xlab("Measured Yield") + ylab("predicted yield")+
+   ggtitle("Gradient Boosting") +
+   xlim(20,max(test_data$N_base_supply)) + ylim(20,max(test_data$N_base_supply))+ 
+   theme_bw()+
+   theme(plot.title = element_text(hjust = 0.5))
+ 
+ 
+ # shap values = the direction of the relationship between our features and target
+ # e.g., high vlaues of total rainfall has positive contribution
+ h2o.shap_summary_plot(ML_gbm, test_data)
+ 
+ 
  
  
  #fit random forest using all data:

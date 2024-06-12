@@ -311,7 +311,7 @@ rec_targetdY_maize <- function(my_ferts,
 rec_targetdY <- function(my_ferts,
                          dY,
                          target = c("relative", "absolute"), #is dY relative or absolute? 
-                         start = rep(50, nrow(my_ferts)), #starting values for the optimisation algorithm.
+                         start = rep(1, nrow(my_ferts)), #starting values for the optimisation algorithm.
                          supply, #indigenous nutrient supply
                          crop = crop, #crop to be defined by QUEFTS
                          att_GY, #attainable yield
@@ -321,13 +321,12 @@ rec_targetdY <- function(my_ferts,
                          df_link){ #parameter important for the attainable yield estimation
   
   
-  df_link$Y_att <- att_GY * 1.2
+  # df_link$Y_att <- att_GY * 1.2
   df_link$yieldPercinc <- paste(dY*100, " %", sep="")
-  att_GY <- att_GY * 0.82 * 1000 *1.2
-  
+ 
   #calculate the control yield $for Rice. this is the yield estimated by QUEFTS for soil INS + blanket recommendation
   if(isBlanketRef == TRUE){
-    GY0  <- GY_br * 0.82 * 1000 
+    GY0  <- GY_br
   }else{
     GY0 <- runQUEFTS(nut_rates = data.frame("N" = 0, "P" = 0, "K" = 0),
                      supply = supply,
@@ -347,7 +346,6 @@ rec_targetdY <- function(my_ferts,
   }
   
   if(GYt > att_GY){
-    
     # print("No solution available: yield target exceeds attainable yield.")
     fert_rates <- rep(NA, nrow(my_ferts))
     
@@ -384,13 +382,14 @@ rec_targetdY <- function(my_ferts,
                     Ya = att_GY,
                     SeasonLength = SeasonLength)
     
-    #return the vector with the fertiliser rates to achieve the target:
+    #return the vector with the fertilizer rates to achieve the target:
     fert_rates <- result$par
+    
   }
   
-  df_link$DAP <- round(fert_rates[1],0)
-  df_link$Urea <- round(fert_rates[2], 0)
-  df_link$NPK_17_3 <- round(fert_rates[3],0)
+  df_link$Urea <- round(fert_rates[1], 0)
+  df_link$MOP <- round(fert_rates[2], 0)
+  df_link$TSP <- round(fert_rates[3], 0)
   
   return(df_link)
   

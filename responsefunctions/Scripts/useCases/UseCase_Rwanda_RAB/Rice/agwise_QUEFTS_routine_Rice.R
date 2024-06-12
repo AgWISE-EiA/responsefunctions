@@ -6,7 +6,7 @@
                          "limSolve", "lpSolve", "Rquefts", "rgdal", "randomForest","ranger","Metrics")
   
   
-  
+
   # check and install packages that are not yet installed
   installed_packages <- packages_required %in% rownames(installed.packages())
   if(any(installed_packages == FALSE)){
@@ -42,6 +42,21 @@
 # Explore yield response to nutrients, observing b treatment 
 ###################################################################
   ds<- unique(readRDS(paste(pathIn, "compiled_fieldData.RDS", sep="")))
+  
+  ## saving data or crop type mapping using remote sensing application
+  ds_RS <- ds %>%
+    dplyr::mutate(country = "Rwanda") %>% 
+    dplyr::rename(planting_date = plantingDate,
+                  harvest_date = harvestDate ) %>% 
+    dplyr::select(c(country, lon, lat, planting_date, harvest_date)) %>% 
+    unique()
+  ds_RS$crop <- "Rice"
+  
+  saveRDS(ds_RS , "~/agwise-datacuration/dataops/datacuration/Data/useCase_Rwanda_RAB/Rice/raw/data4RS.RDS")
+  
+  
+  
+  
   ds <- subset(ds, select=-c(N100, P100, K100))
   ds$treat2 <- paste(ds$N, ds$P, ds$K, sep=":")
   # head(ds)

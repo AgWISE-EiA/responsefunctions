@@ -12,6 +12,9 @@ suppressWarnings(suppressPackageStartupMessages(invisible(lapply(packages_requir
 
 ###############################
 # 1. define path for input and output
+country <- "Rwanda"
+useCaseName <- "RAB"
+Crop <- "Rice"
 ###############################
 pathIn <- paste("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Rice/raw/")
 pathOut <- paste("~/agwise-responsefunctions/dataops/responsefunctions/Data/useCase_Rwanda_RAB/Rice/transform/validation/")
@@ -98,7 +101,7 @@ gg1 <- ggplot(ds_filtr, aes(x = Variety3, fill = Variety3)) +
   geom_bar(stat = "count", width = 0.5) +
   labs(title = "Total Number of Observations by Rice varieties",
        x = "Variety",
-       y = "Count") +
+       y = "Number of validation trials") +
     theme_minimal() +
             theme(axis.title = element_text(size = 12, face="bold"),
                   plot.title = element_text(hjust = 0.5, face = "bold"),
@@ -121,7 +124,7 @@ ds_filtr <- ds_filtr %>%
       SSR_riceGrainsMC = SSR1_riceGrainsMC,
       IBR_riceGrainsMC = SSR2_riceGrainsMC)
 
-### map the vlaidation location 
+### map the validation location 
 rwshp0 <- st_as_sf(geodata::gadm(country, level = 0, path='.'))
 rwshp1 <- st_as_sf(geodata::gadm(country, level = 1, path='.'))
 rwshp2 <- st_as_sf(geodata::gadm(country, level = 2, path='.'))
@@ -133,23 +136,31 @@ RW_aez <- spTransform(AEZ, CRS( "+proj=longlat +ellps=WGS84 +datum=WGS84"))
 RW_aez <- RW_aez[RW_aez$Names_AEZs %in% c("Granitic ridge", "Central plateau", "Eastern savana", 
                                           "Mayaga","Eastern plateau","Kivu  Lake borders", "Imbo"),]
 rwAEZ <- st_as_sf(RW_aez)
-ggplot()+
-  geom_sf(data = rwshp0, linewidth = 1.2, color = "black", fill=NA) + 
-  geom_sf(data = rwAEZ, aes(fill = Names_AEZs)) +
-  geom_sf(data = rwlake, size=NA, fill="lightblue")+
-  geom_sf(data = rwshp1, linewidth = 0.8, color = "black", fill=NA) +
-  geom_sf(data = rwshp0, linewidth = 1.2, color = "black", fill=NA) + 
-  geom_point(data = ds_filtr, aes(x=as.numeric(lon), y=as.numeric(lat), 
-                                       colour = Variety3, shape = AEZ, size=3))+
-  scale_shape_manual(values = c(0,1,2,3,7,8,9,15,23)) +
-  scale_fill_manual(values = c(rep("grey3", 8))) +
-  theme_bw()+
-  xlab("Longitude")+
-  ylab("Latitude")+
-  theme(axis.title = element_blank(),
-        axis.text = element_text(size=14),legend.position = "right",
-        strip.text = element_text(size=14, face="bold"))
 
+ggmap<- ggplot() +
+  geom_sf(data = rwshp0, linewidth = 1.2, color = "black", fill = NA) + 
+  geom_sf(data = rwAEZ, aes(fill = Names_AEZs)) +
+  geom_sf(data = rwlake, size = NA, fill = "lightblue") +
+  geom_sf(data = rwshp1, linewidth = 0.8, color = "black", fill = NA) +
+  geom_sf(data = rwshp0, linewidth = 1.2, color = "black", fill = NA) + 
+  geom_point(data = ds_filtr, aes(x = as.numeric(lon), y = as.numeric(lat), 
+                                  shape = Variety3, color = Variety3), size = 3) +
+  scale_shape_manual(values = c(0, 1, 2, 3, 7, 8, 9, 15, 23)) +
+  scale_color_manual(values = c("red","green","blue","brown"),
+                     guide = "none")  +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  labs(fill = "Agroecological zone",   # Specify custom title for color legend
+       shape = "Variety",
+       color = NULL, 
+       size = NULL) +
+  theme(axis.text = element_text(size = 12),
+        legend.position = "right",
+        strip.text = element_text(size = 12, face = "bold"))
+
+ggmap
+ggsave(paste(pathOut,"Validation location map.pdf"), ggmap, width=8, height = 6)
 
 ## yield distribution by treatment 
 par(mfrow=c(2,2))
@@ -162,11 +173,12 @@ ds_filtr[ds_filtr$hhID == "RSHHRW000322", ]
 ds_filtr <- ds_filtr[ds_filtr$BR_riceGrainsFW <= 60, ]
 
 ## yield distribution by treatment 
+pdf(paste(pathOut,"rice freshweight histograms.pdf"))
 par(mfrow=c(2,2))
-hist(ds_filtr$BR_riceGrainsFW,main="BR", xlim=c(0,35), xlab=("Rice FW yield"))
-hist(ds_filtr$SSR_riceGrainsFW, main="SSR", xlim=c(0,35), xlab=("Rice FW yield"))
-hist(ds_filtr$IBR_riceGrainsFW, main="IBR", xlim=c(0,35), xlab=("Rice FW yield"))
-
+hist(ds_filtr$BR_riceGrainsFW,main="BR", xlim=c(0,30), xlab=("Rice fresh weight yield"))
+hist(ds_filtr$SSR_riceGrainsFW, main="SSR", xlim=c(0,30), xlab=("Rice fresh weight yield"))
+hist(ds_filtr$IBR_riceGrainsFW, main="IBR", xlim=c(0,30), xlab=("Rice fresh weight yield"))
+dev.off()
 
 DW_rice <- function(area, riceGrainsFW, riceGrainsMC) {
   yield_per_area <- riceGrainsFW / area
@@ -194,7 +206,8 @@ ds_rice[ds_rice$enhhID == "RSENRW000034_RSHHRW000335", ]
 ### drop this extreme outlier 
 ds_rice <- unique(droplevels(ds_rice[!ds_rice$enhhID == "RSENRW000034_RSHHRW000335", ]))
 
-
+#verify
+ds_rice[ds_rice$YaDW < 1, ]$YaDW
 ###### 
 pathIn2 <- paste("~/agwise-datasourcing/dataops/datasourcing/Data/useCase_Rwanda_RAB/Maize/Landing/", sep="")
 AEZ <-  suppressMessages(suppressWarnings(readOGR(dsn=paste(pathIn2, "/AEZ", sep=""),  layer="AEZ_DEM_Dissolve")))
@@ -205,6 +218,7 @@ names(rwAEZ)[names(rwAEZ) == "Names_AEZs"] <- "AEZ"
 names(rwAEZ$AEZ)
 ds_rice1<- st_as_sf(ds_rice, coords = c("lon", "lat"), crs = st_crs(RW_aez))
 ds_rice <- st_intersection(ds_rice1, rwAEZ )
+
 #plot showing yield ranges by variety and different data sources:
 gg1_rice <- ds_rice %>%
   unique() %>% 
@@ -348,26 +362,54 @@ plot(ecdf(ds_rice_wide$IBR_BR))
 plot(ecdf(ds_rice_wide$SSR_BR))
 plot(ecdf(ds_rice_wide$SSR_BR20))
 
+pdf(paste(pathOut,"ecdf_plot.pdf"))
+# Plot ECDF for IBR_BR
+plot(ecdf(ds_rice_wide$IBR_BR), main="Empirical cumulative distribution function", xlab="Yield difference [t/ha]", ylab="Probability", col="blue")
 
+# Add ECDF for SSR_BR
+lines(ecdf(ds_rice_wide$SSR_BR), col="red")
+
+# Add ECDF for SSR_BR20
+lines(ecdf(ds_rice_wide$SSR_BR20), col="green")
+
+# Calculate intersection points
+ibrr_intercept <- ecdf(ds_rice_wide$IBR_BR)(0)
+ssrbr_intercept <- ecdf(ds_rice_wide$SSR_BR)(0)
+ssrbr20_intercept <- ecdf(ds_rice_wide$SSR_BR20)(0)
+
+# Add horizontal lines at intersection points
+abline(h = ibrr_intercept, lty=3, col="blue")
+abline(h = ssrbr_intercept, lty=3, col="red")
+abline(h = ssrbr20_intercept, lty=3, col="green")
+
+# Find x-coordinate where ECDF intersects y=0
+ibrr_zero_x <- min(ds_rice_wide$IBR_BR[which(ds_rice_wide$IBR_BR >= 0)])
+# Draw lines from y=0 to ECDF curve
+abline(v = ibrr_zero_x, h = 0, lty=3, col="black")
+# Add legend
+legend("bottomright", legend=c("IBR_BR", "SSR_BR", "SSR_BR+20%"), col=c("blue", "red", "green"), lty=1)
+
+dev.off()
 
 ds_rice_wide <- ds_rice_wide %>% 
   mutate(AEZV = paste(AEZ, Variety3, sep="-"))
 
 ################# IBR versus BR
 
-ds_rice_wide %>% 
+ggIBR_BR<-ds_rice_wide %>% 
   # dplyr::filter(IBR_BR > -5 & IBR_BR < 5 & AEZ %in% c("Bugesera", "Central plateau", "Granitic ridge", "Mayaga", "Imbo","Eastern plateau", "Eastern savana")) %>% 
   ggplot( aes(IBR_BR, colour = AEZ)) +
   geom_vline(xintercept = 0, linetype="dashed", col="grey2")+
   stat_ecdf(linewidth = 1)+
   facet_wrap(~ AEZV,  ncol=4)+
-  xlab("Yield difference [t/ha]")+ ylab("")+
+  xlab("Yield difference [t/ha]")+ ylab("Probability")+
   ggtitle("Rice, yield effect of (IBR - BR) by AEZ varieties")+
   theme_bw()+
   theme(legend.position = "bottom", 
         plot.title = element_text(hjust = 0.5, face = "bold"),
         strip.text = element_text(size = 11, face="bold"))
-
+ggIBR_BR
+ggsave(paste(pathOut,"IBR_BR_ECDF_AEZ+Fertlizer package.pdf"), ggIBR_BR, width=15, height = 15)
 ### for IBR - BR: 
 # farmers who get increase yield benefited twice from lower cost of fertilizer and yield increase
 # from those who get lower yield with IBR, for some, the yield loss is compensated by fertilizer cost reduction and for others not
@@ -380,37 +422,37 @@ ds_rice_wide %>%
 
 ################ SSR versus BR 
 
-ds_rice_wide %>% 
+ggSSR_BR<-ds_rice_wide %>% 
   ggplot( aes(SSR_BR, colour = AEZ)) +
   geom_vline(xintercept = 0, linetype="dashed", col="grey2")+
   stat_ecdf(linewidth = 1)+
   facet_wrap(~ AEZV,  ncol=4)+
-  xlab("")+ ylab("")+
+  xlab("Yield difference [t/ha]")+ ylab("Probability")+
   ggtitle("Rice, yield effect of (SSR - BR) by AEZ - varieties")+
   theme_bw()+
   theme(legend.position = "bottom", 
         plot.title = element_text(hjust = 0.5, face = "bold"),
         strip.text = element_text(size = 11, face="bold"))
 
-
-
+ggSSR_BR
+ggsave(paste(pathOut,"SSR_BR_ECDF_AEZ+Fertlizer package.pdf"), ggSSR_BR, width=15, height = 15)
 
 ##################################### when the SSR is compared with strictly 20% + BR  
 
-ds_rice_wide %>% 
+ggSSR_BR20<-ds_rice_wide %>% 
   # dplyr::filter(SSR_BR20 > -5 & AEZ %in% c("Bugesera", "Central plateau", "Granitic ridge", "Mayaga", "Imbo","Eastern plateau", "Eastern savana")) %>% 
   ggplot( aes(SSR_BR20, colour = AEZ)) +
   geom_vline(xintercept = 0, linetype="dashed", col="grey2")+
   stat_ecdf(linewidth=1) +
   facet_wrap(~AEZV,  ncol=4) +
-  xlab("Yield difference [t/ha]")+ ylab("")+
+  xlab("Yield difference [t/ha]")+ ylab("Probability")+
   ggtitle("Rice, yield effect of (SSR - BR+20%) by AEZ - varieties")+
   theme_bw()+
   theme(legend.position = "bottom", 
         plot.title = element_text(hjust = 0.5, face = "bold"),
         strip.text = element_text(size = 11, face="bold"))
-
-
+ggSSR_BR20
+ggsave(paste(pathOut,"SSR_BR20_ECDF_AEZ+Fertlizer package.pdf"), ggSSR_BR20, width=15, height = 15)
 
 ### for SSR vs BR:
 # in most cases the best case scenario is 50% of farmers realizing the 20% yield increase

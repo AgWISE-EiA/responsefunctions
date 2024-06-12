@@ -158,14 +158,14 @@ ds %>%
   filter(!(N > 75 & P > 30 & K > 50)) %>%
   ggplot(aes(x = refY, y = dY)) + 
   #geom_point(alpha=.33, shape=16) + 
-  geom_point(aes(shape = variable)) +
+  geom_point(aes(shape = variable, alpha=0.5)) +
   scale_shape_manual(values = c(3, 16)) +
   facet_wrap(~variable) + 
   #facet_grid(expCode ~ variable) +
   geom_hline(yintercept = 0) +
-  xlab("\nYield in reference treatment [t/ha]") +
-  ylab("Yield difference relative to reference treatment [t/ha]\n") +
-  theme_gray()+
+  xlab("\nYield in reference treatment [Mg ha-1]") +
+  ylab("Reference yield – treatments yield [Mg ha-1]\n") +
+  theme_bw()+
   theme(axis.title = element_text(size = 14, face="bold"),
         axis.text = element_text(size = 14),
         strip.text = element_text(size = 14, face="bold"),
